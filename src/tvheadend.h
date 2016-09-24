@@ -580,13 +580,18 @@ typedef struct streaming_message {
  * A streaming target receives data.
  */
 
-typedef void (st_callback_t)(void *opauqe, streaming_message_t *sm);
+typedef void (st_callback_t)(void *opaque, streaming_message_t *sm);
+
+typedef struct {
+  st_callback_t *st_cb;
+  htsmsg_t *(*st_info)(void *opaque, htsmsg_t *list);
+} streaming_ops_t;
 
 typedef struct streaming_target {
   LIST_ENTRY(streaming_target) st_link;
   streaming_pad_t *st_pad;               /* Source we are linked to */
 
-  st_callback_t *st_cb;
+ streaming_ops_t st_ops;
   void *st_opaque;
   int st_reject_filter;
 } streaming_target_t;
@@ -806,7 +811,7 @@ static inline uint8_t *sbuf_peek(sbuf_t *sb, int off) { return sb->sb_data + off
 
 char *md5sum ( const char *str, int lowercase );
 
-int makedirs ( const char *subsys, const char *path, int mode, int mstrict, gid_t gid, uid_t uid );
+int makedirs ( int subsys, const char *path, int mode, int mstrict, gid_t gid, uid_t uid );
 
 int rmtree ( const char *path );
 
@@ -839,6 +844,8 @@ static inline uint32_t deltaU32(uint32_t a, uint32_t b) { return (a > b) ? (a - 
 #define SKEL_FREE(name) do { free(name); name = NULL; } while (0)
 
 htsmsg_t *network_interfaces_enum(void *obj, const char *lang);
+
+const char *gmtime2local(time_t gmt, char *buf, size_t buflen);
 
 /* glibc wrapper */
 #if ! ENABLE_QSORT_R

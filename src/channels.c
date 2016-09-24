@@ -359,6 +359,7 @@ channel_class_epg_running_list ( void *o, const char *lang )
 }
 
 CLASS_DOC(channel)
+PROP_DOC(runningstate)
 
 const idclass_t channel_class = {
   .ic_class      = "channel",
@@ -484,9 +485,8 @@ const idclass_t channel_class = {
       .name     = N_("Use EPG running state"),
       .desc     = N_("Use EITp/f to decide "
                      "event start/stop. This is also known as "
-                     "\"Accurate Recording\". Note that this can have "
-                     "unexpected results if the broadcaster isn't very "
-                     "good at time keeping."),
+                     "\"Accurate Recording\". See Help for details."),
+      .doc      = prop_doc_runningstate,
       .off      = offsetof(channel_t, ch_epg_running),
       .list     = channel_class_epg_running_list,
       .opts     = PO_ADVANCED | PO_DOC_NLIST,
@@ -700,12 +700,17 @@ channel_get_number ( channel_t *ch )
   if (ch->ch_number) {
     n = ch->ch_number;
   } else {
-    LIST_FOREACH(ilm, &ch->ch_services, ilm_in2_link) {
-      if (ch->ch_bouquet &&
-          (n = bouquet_get_channel_number(ch->ch_bouquet, (service_t *)ilm->ilm_in1)))
-        break;
-      if ((n = service_get_channel_number((service_t *)ilm->ilm_in1)))
-        break;
+    if (ch->ch_bouquet) {
+      LIST_FOREACH(ilm, &ch->ch_services, ilm_in2_link) {
+        if ((n = bouquet_get_channel_number(ch->ch_bouquet, (service_t *)ilm->ilm_in1)))
+          break;
+      }
+    }
+    if (n == 0) {
+      LIST_FOREACH(ilm, &ch->ch_services, ilm_in2_link) {
+        if ((n = service_get_channel_number((service_t *)ilm->ilm_in1)))
+          break;
+      }
     }
   }
   if (n) {
@@ -976,12 +981,12 @@ channel_create0
 
   if (idnode_insert(&ch->ch_id, uuid, idc, IDNODE_SHORT_UUID)) {
     if (uuid)
-      tvherror("channel", "invalid uuid '%s'", uuid);
+      tvherror(LS_CHANNEL, "invalid uuid '%s'", uuid);
     free(ch);
     return NULL;
   }
   if (RB_INSERT_SORTED(&channels, ch, ch_link, ch_id_cmp)) {
-    tvherror("channel", "id collision!");
+    tvherror(LS_CHANNEL, "id collision!");
     abort();
   }
 
@@ -1028,7 +1033,7 @@ channel_delete ( channel_t *ch, int delconf )
   idnode_save_check(&ch->ch_id, delconf);
 
   if (delconf)
-    tvhinfo("channel", "%s - deleting", channel_get_name(ch));
+    tvhinfo(LS_CHANNEL, "%s - deleting", channel_get_name(ch));
 
   /* Tags */
   while((ilm = LIST_FIRST(&ch->ch_ctms)) != NULL)
@@ -1241,7 +1246,7 @@ channel_tag_create(const char *uuid, htsmsg_t *conf)
 
   if (idnode_insert(&ct->ct_id, uuid, &channel_tag_class, IDNODE_SHORT_UUID)) {
     if (uuid)
-      tvherror("channel", "invalid tag uuid '%s'", uuid);
+      tvherror(LS_CHANNEL, "invalid tag uuid '%s'", uuid);
     free(ct);
     return NULL;
   }

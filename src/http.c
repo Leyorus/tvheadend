@@ -100,8 +100,9 @@ int http_str2ver(const char *str)
 /**
  *
  */
-static http_path_t *
-http_resolve(http_connection_t *hc, char **remainp, char **argsp)
+static int
+http_resolve(http_connection_t *hc, http_path_t *_hp,
+             char **remainp, char **argsp)
 {
   http_path_t *hp;
   int n = 0, cut = 0;
@@ -131,10 +132,14 @@ http_resolve(http_connection_t *hc, char **remainp, char **argsp)
           break;
       }
     }
+    if (hp) {
+      *_hp = *hp;
+      hp = _hp;
+    }
     pthread_mutex_unlock(hc->hc_paths_mutex);
 
     if(hp == NULL)
-      return NULL;
+      return 0;
 
     cut += hp->hp_len;
 
@@ -178,10 +183,10 @@ http_resolve(http_connection_t *hc, char **remainp, char **argsp)
     break;
 
   default:
-    return NULL;
+    return 0;
   }
 
-  return hp;
+  return 1;
 }
 
 
@@ -256,7 +261,7 @@ http_get_nonce(void)
 
   while (1) {
     mono = getmonoclock();
-    mono ^= 0xa1687211885fcd30;
+    mono ^= 0xa1687211885fcd30LL;
     snprintf(stamp, sizeof(stamp), "%"PRId64, mono);
     m = md5sum(stamp, 1);
     strcpy(n->nonce, m);
@@ -557,7 +562,7 @@ http_error(http_connection_t *hc, int error)
       level = LOG_DEBUG;
     else if (error == HTTP_STATUS_BAD_REQUEST || error > HTTP_STATUS_UNAUTHORIZED)
       level = LOG_ERR;
-    tvhlog(level, "http", "%s: %s %s %s -- %d",
+    tvhlog(level, LS_HTTP, "%s: %s %s %s -- %d",
 	   hc->hc_peer_ipstr, http_ver2str(hc->hc_version),
            http_cmd2str(hc->hc_cmd), hc->hc_url, error);
   }
@@ -713,8 +718,8 @@ http_access_verify_ticket(http_connection_t *hc)
   hc->hc_access = access_ticket_verify2(ticket_id, hc->hc_url);
   if (hc->hc_access == NULL)
     return;
-  tvhlog(LOG_INFO, "http", "%s: using ticket %s for %s",
-	 hc->hc_peer_ipstr, ticket_id, hc->hc_url);
+  tvhinfo(LS_HTTP, "%s: using ticket %s for %s",
+	  hc->hc_peer_ipstr, ticket_id, hc->hc_url);
 }
 
 /**
@@ -952,7 +957,7 @@ dump_request(http_connection_t *hc)
   if (!first)
     tvh_strlcatf(buf, sizeof(buf), ptr, "}}");
 
-  tvhtrace("http", "%s %s %s%s", http_ver2str(hc->hc_version),
+  tvhtrace(LS_HTTP, "%s %s %s%s", http_ver2str(hc->hc_version),
            http_cmd2str(hc->hc_cmd), hc->hc_url, buf);
 }
 
@@ -962,8 +967,10 @@ dump_request(http_connection_t *hc)
 static int
 http_cmd_options(http_connection_t *hc)
 {
+  pthread_mutex_lock(&hc->hc_fd_lock);
   http_send_header(hc, HTTP_STATUS_OK, NULL, INT64_MIN,
 		   NULL, NULL, -1, 0, NULL, NULL);
+  pthread_mutex_unlock(&hc->hc_fd_lock);
   return 0;
 }
 
@@ -973,15 +980,14 @@ http_cmd_options(http_connection_t *hc)
 static int
 http_cmd_get(http_connection_t *hc)
 {
-  http_path_t *hp;
+  http_path_t hp;
   char *remain;
   char *args;
 
   if (tvhtrace_enabled())
     dump_request(hc);
 
-  hp = http_resolve(hc, &remain, &args);
-  if(hp == NULL) {
+  if (!http_resolve(hc, &hp, &remain, &args)) {
     http_error(hc, HTTP_STATUS_NOT_FOUND);
     return 0;
   }
@@ -989,7 +995,7 @@ http_cmd_get(http_connection_t *hc)
   if(args != NULL)
     http_parse_args(&hc->hc_req_args, args);
 
-  return http_exec(hc, hp, remain);
+  return http_exec(hc, &hp, remain);
 }
 
 
@@ -1004,7 +1010,7 @@ http_cmd_get(http_connection_t *hc)
 static int
 http_cmd_post(http_connection_t *hc, htsbuf_queue_t *spill)
 {
-  http_path_t *hp;
+  http_path_t hp;
   char *remain, *args, *v;
 
   /* Set keep-alive status */
@@ -1047,12 +1053,11 @@ http_cmd_post(http_connection_t *hc, htsbuf_queue_t *spill)
   if (tvhtrace_enabled())
     dump_request(hc);
 
-  hp = http_resolve(hc, &remain, &args);
-  if(hp == NULL) {
+  if (!http_resolve(hc, &hp, &remain, &args)) {
     http_error(hc, HTTP_STATUS_NOT_FOUND);
     return 0;
   }
-  return http_exec(hc, hp, remain);
+  return http_exec(hc, &hp, remain);
 }
 
 
@@ -1551,7 +1556,7 @@ http_server_init(const char *bindaddr)
     .cancel = http_cancel
   };
   RB_INIT(&http_nonces);
-  http_server = tcp_server_create("http", "HTTP", bindaddr, tvheadend_webui_port, &ops, NULL);
+  http_server = tcp_server_create(LS_HTTP, "HTTP", bindaddr, tvheadend_webui_port, &ops, NULL);
   atomic_set(&http_server_running, 1);
 }
 

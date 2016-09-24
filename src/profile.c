@@ -87,12 +87,12 @@ profile_create
   if ((s = htsmsg_get_str(conf, "class")) != NULL)
     pb = profile_class_find(s);
   if (pb == NULL) {
-    tvherror("profile", "wrong class %s!", s);
+    tvherror(LS_PROFILE, "wrong class %s!", s);
     return NULL;
   }
   pro = pb->build();
   if (pro == NULL) {
-    tvherror("profile", "Profile class %s is not available!", s);
+    tvherror(LS_PROFILE, "Profile class %s is not available!", s);
     return NULL;
   }
   LIST_INIT(&pro->pro_dvr_configs);
@@ -100,7 +100,7 @@ profile_create
   pro->pro_contaccess = 1;
   if (idnode_insert(&pro->pro_id, uuid, pb->clazz, 0)) {
     if (uuid)
-      tvherror("profile", "invalid uuid '%s'", uuid);
+      tvherror(LS_PROFILE, "invalid uuid '%s'", uuid);
     free(pro);
     return NULL;
   }
@@ -658,6 +658,22 @@ direct:
   profile_deliver(prch, sm);
 }
 
+static htsmsg_t *
+profile_input_info(void *opaque, htsmsg_t *list)
+{
+  profile_chain_t *prch = opaque;
+  streaming_target_t *st = prch->prch_share;
+  htsmsg_add_str(list, NULL, "profile input");
+  st->st_ops.st_info(st->st_opaque, list);
+  st = prch->prch_post_share;
+  return st->st_ops.st_info(st->st_opaque, list);
+}
+
+static streaming_ops_t profile_input_ops = {
+  .st_cb   = profile_input,
+  .st_info = profile_input_info
+};
+
 /*
  *
  */
@@ -734,6 +750,18 @@ profile_sharer_input(void *opaque, streaming_message_t *sm)
     streaming_msg_free(sm);
 }
 
+static htsmsg_t *
+profile_sharer_input_info(void *opaque, htsmsg_t *list)
+{
+  htsmsg_add_str(list, NULL, "profile sharer input");
+  return list;
+}
+
+static streaming_ops_t profile_sharer_input_ops = {
+  .st_cb   = profile_sharer_input,
+  .st_info = profile_sharer_input_info
+};
+
 /*
  *
  */
@@ -755,7 +783,7 @@ profile_sharer_find(profile_chain_t *prch)
   }
   if (!prsh) {
     prsh = calloc(1, sizeof(*prsh));
-    streaming_target_init(&prsh->prsh_input, profile_sharer_input, prsh, 0);
+    streaming_target_init(&prsh->prsh_input, &profile_sharer_input_ops, prsh, 0);
     LIST_INIT(&prsh->prsh_chains);
   }
   return prsh;
@@ -1008,7 +1036,7 @@ profile_htsp_work(profile_chain_t *prch,
 
   prch->prch_share = prsh->prsh_tsfix;
   prch->prch_flags = SUBSCRIPTION_PACKET;
-  streaming_target_init(&prch->prch_input, profile_input, prch, 0);
+  streaming_target_init(&prch->prch_input, &profile_input_ops, prch, 0);
   prch->prch_st = &prch->prch_input;
   return 0;
 
@@ -1567,15 +1595,13 @@ profile_class_language_list(void *o, const char *lang)
   char buf[128];
 
   while (lc->code2b) {
-    htsmsg_t *e = htsmsg_create_map();
+    htsmsg_t *e;
     if (!strcmp(lc->code2b, "und")) {
-      htsmsg_add_str(e, "key", "");
-      htsmsg_add_str(e, "val", tvh_gettext_lang(lang, N_("Use original")));
+      e = htsmsg_create_key_val("", tvh_gettext_lang(lang, N_("Use original")));
     } else {
-      htsmsg_add_str(e, "key", lc->code2b);
       snprintf(buf, sizeof(buf), "%s (%s)", lc->desc, lc->code2b);
       buf[sizeof(buf)-1] = '\0';
-      htsmsg_add_str(e, "val", buf);
+      e = htsmsg_create_key_val(lc->code2b, buf);
     }
     htsmsg_add_msg(l, NULL, e);
     lc++;
@@ -1604,13 +1630,9 @@ profile_class_codec_list(int (*check)(int sct), const char *lang)
   char buf[128];
   int sct;
 
-  e = htsmsg_create_map();
-  htsmsg_add_str(e, "key", "");
-  htsmsg_add_str(e, "val", tvh_gettext_lang(lang, N_("Do not use")));
+  e = htsmsg_create_key_val("", tvh_gettext_lang(lang, N_("Do not use")));
   htsmsg_add_msg(l, NULL, e);
-  e = htsmsg_create_map();
-  htsmsg_add_str(e, "key", "copy");
-  htsmsg_add_str(e, "val", tvh_gettext_lang(lang, N_("Copy codec type")));
+  e = htsmsg_create_key_val("copy", tvh_gettext_lang(lang, N_("Copy codec type")));
   htsmsg_add_msg(l, NULL, e);
   c = transcoder_get_capabilities(profile_transcode_experimental_codecs);
   HTSMSG_FOREACH(f, c) {
@@ -1627,9 +1649,7 @@ profile_class_codec_list(int (*check)(int sct), const char *lang)
       snprintf(buf, sizeof(buf), "%s: %s", s, s2);
     else
       snprintf(buf, sizeof(buf), "%s", s);
-    e = htsmsg_create_map();
-    htsmsg_add_str(e, "key", s);
-    htsmsg_add_str(e, "val", buf);
+    e = htsmsg_create_key_val(s, buf);
     htsmsg_add_msg(l, NULL, e);
   }
   htsmsg_destroy(c);
@@ -1923,7 +1943,7 @@ profile_transcode_work(profile_chain_t *prch,
     prsh->prsh_tsfix = tsfix_create(dst);
   }
   prch->prch_share = prsh->prsh_tsfix;
-  streaming_target_init(&prch->prch_input, profile_input, prch, 0);
+  streaming_target_init(&prch->prch_input, &profile_input_ops, prch, 0);
   prch->prch_st = &prch->prch_input;
   return 0;
 fail:

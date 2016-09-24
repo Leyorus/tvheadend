@@ -46,7 +46,7 @@ timeshift_packet_log0
   ( const char *source, timeshift_t *ts, streaming_message_t *sm )
 {
   th_pkt_t *pkt = sm->sm_data;
-  tvhtrace("timeshift",
+  tvhtrace(LS_TIMESHIFT,
            "ts %d pkt %s - stream %d type %c pts %10"PRId64
            " dts %10"PRId64" dur %10d len %6zu time %14"PRId64,
            ts->id, source,
@@ -284,9 +284,11 @@ timeshift_packet( timeshift_t *ts, streaming_message_t *sm )
   th_pkt_t *pkt = sm->sm_data;
   int64_t time;
 
-  time = ts_rescale(pkt->pkt_pts, 1000000);
-  if (ts->last_wr_time < time)
-    ts->last_wr_time = time;
+  if (pkt->pkt_pts != PTS_UNSET) {
+    time = ts_rescale(pkt->pkt_pts, 1000000);
+    if (ts->last_wr_time < time)
+      ts->last_wr_time = time;
+  }
   sm->sm_time = ts->last_wr_time;
   timeshift_packet_log("wr ", ts, sm);
   streaming_target_deliver2(&ts->wr_queue.sq_st, sm);
@@ -321,8 +323,8 @@ static void timeshift_input
       pkt2 = pkt_copy_shallow(pkt);
       pkt_ref_dec(pkt);
       sm->sm_data = pkt2;
-      pkt2->pkt_pts += ts->start_pts;
-      pkt2->pkt_dts += ts->start_pts;
+      if (pkt2->pkt_pts != PTS_UNSET) pkt2->pkt_pts += ts->start_pts;
+      if (pkt2->pkt_dts != PTS_UNSET) pkt2->pkt_dts += ts->start_pts;
     }
 
     /* Check for exit */
@@ -354,6 +356,19 @@ _exit:
       timeshift_write_exit(ts->rd_pipe.wr);
   }
 }
+
+static htsmsg_t *
+timeshift_input_info(void *opaque, htsmsg_t *list)
+{
+  htsmsg_add_str(list, NULL, "wtimeshift input");
+  return list;
+}
+
+static streaming_ops_t timeshift_input_ops = {
+  .st_cb   = timeshift_input,
+  .st_info = timeshift_input_info
+};
+
 
 /**
  *
@@ -440,7 +455,7 @@ streaming_target_t *timeshift_create
 
   /* Initialise input */
   streaming_queue_init(&ts->wr_queue, 0, 0);
-  streaming_target_init(&ts->input, timeshift_input, ts, 0);
+  streaming_target_init(&ts->input, &timeshift_input_ops, ts, 0);
   tvhthread_create(&ts->wr_thread, NULL, timeshift_writer, ts, "tshift-wr");
   tvhthread_create(&ts->rd_thread, NULL, timeshift_reader, ts, "tshift-rd");
 
